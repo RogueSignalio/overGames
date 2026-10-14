@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Net Map Generator Test</title>
+<style>
+  body { margin: 0; background: #222; color: #fff; font-family: sans-serif; padding: 20px; }
+  pre { font-size: 22px; line-height: 1.1; display: inline-block; margin-right: 40px; vertical-align: top; }
+</style>
+<script src="./net_gen.js"></script>
+</head>
+<body>
+<h3>Solution / Scrambled</h3>
+<pre id="solution"></pre><pre id="scrambled"></pre>
+<script>
+// Index = N(1) + E(2) + S(4) + W(8)
+const CHARS = [' ', '╵', '╶', '└', '╷', '│', '┌', '├', '╴', '┘', '─', '┴', '┐', '┤', '┬', '┼']
+const to_text = (grid) => grid.map(row => row.map(m => CHARS[m]).join('')).join('\n')
+
+const gen = new NetMapGenerator({ columns: 10, rows: 8, branch_bias: 0.4, allow_cross: false, seed: 'quack' })
+try {
+  const result = gen.generate()
+  document.getElementById('solution').textContent = to_text(result.solution)
+  document.getElementById('scrambled').textContent = to_text(result.map)
+  console.log('Server at', result.server)
+  console.log('Solved check on solution:', NetMapGenerator.isSolved(result.solution, result.server))
+  console.log('Solved check on scramble:', NetMapGenerator.isSolved(result.map, result.server))
+} catch (e) {
+  console.error(e.message)
+}
+</script>
+</body>
+</html>

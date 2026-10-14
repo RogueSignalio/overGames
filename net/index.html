@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phaser Net: Tile-Based</title>
+<style>
+  body { margin: 0; background: #222; display: flex; justify-content: center; align-items: center; height: 100vh; color: #fff; font-family: sans-serif; }
+  canvas { border: 2px solid #555; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+  #game { text-align: center; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/phaser@v3.90.0/dist/phaser.min.js" crossorigin="anonymous"></script>
+<script src="./net_gen.js"></script>
+<script src="./net.js"></script>
+</head>
+<body>
+<div id="game"></div>
+<script>
+let game = null
+let maps = []
+let map_configs = [
+  { rows: 5, columns: 5, branch_bias: 0.4, allow_cross: false },
+  { rows: 7, columns: 7, branch_bias: 0.4, allow_cross: false },
+  { rows: 9, columns: 9, branch_bias: 0.3, allow_cross: false },
+]
+
+map_configs.forEach((mcfg) => {
+  let gen = new NetMapGenerator(mcfg)
+  maps.push(gen.generate())   // { map, solution, server }
+})
+
+try {
+  game = new NetGame({
+    map: null,
+    maps: maps,
+    tile_size: 64,
+    theme: {
+      //path: 'assets/default/',      // try 'assets/light/'
+      path: 'assets/light/',      // try 'assets/light/'
+      background: 'background.png', // set to null for a plain color
+      background_color: '#222222',
+      tile_bg: 'tile_bg.png',       // set to null for no tile backing
+    },
+    win_callback: (t) => {
+      console.log(`${t.submit}`)
+    },
+    debug: true,
+  },
+  {
+    parent: 'game',
+  })
+} catch (e) {
+  console.error(e.message)
+}
+</script>
+</body>
+</html>

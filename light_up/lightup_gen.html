@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Light Up Map Generator Test</title>
+<style>
+  body { margin: 0; background: #222; color: #fff; font-family: sans-serif; padding: 20px; }
+  label { margin-right: 12px; }
+  input { width: 70px; }
+  pre { font-size: 20px; line-height: 1.15; display: inline-block; margin: 14px 40px 0 0; vertical-align: top; }
+  #info { margin-top: 12px; color: #aaa; }
+</style>
+<script src="./lightup_gen.js"></script>
+</head>
+<body>
+<h3>Light Up generator</h3>
+<label>Columns <input id="cols" type="number" value="10" min="3" max="30"></label>
+<label>Rows <input id="rows" type="number" value="10" min="3" max="30"></label>
+<label>Black % <input id="pct" type="number" value="20" min="5" max="45"></label>
+<label>Seed <input id="seed" type="text" value="quack"></label>
+<label>Symmetry
+  <select id="sym"><option value="rot2">rot2</option><option value="none">none</option></select>
+</label>
+<button id="go">Generate</button>
+<div id="info"></div>
+<pre id="puzzle"></pre><pre id="solution"></pre>
+<p style="color:#aaa">* lamp &nbsp; - lit &nbsp; . unlit &nbsp; # black &nbsp; 0-4 number</p>
+<script>
+function run() {
+  const gen = new LightUpMapGenerator({
+    columns: +document.getElementById('cols').value,
+    rows: +document.getElementById('rows').value,
+    black_percent: +document.getElementById('pct').value,
+    symmetry: document.getElementById('sym').value,
+    seed: document.getElementById('seed').value || null,
+  })
+  const t0 = performance.now()
+  const result = gen.generate()
+  const ms = Math.round(performance.now() - t0)
+
+  const a = LightUpMapGenerator.analyze(result.map, result.solution)
+  const found = LightUpMapGenerator.solve(result.map, 2).count
+  const clues = result.map.flat().filter(v => v >= 0 && v <= 4).length
+
+  document.getElementById('puzzle').textContent = 'Puzzle\n\n' + LightUpMapGenerator.to_text(result.map)
+  document.getElementById('solution').textContent = 'Solution\n\n' + LightUpMapGenerator.to_text(result.map, result.solution)
+  document.getElementById('info').textContent =
+    `Generated in ${ms} ms. ${clues} numbers. Solution valid: ${a.solved}. ` +
+    `Solver found ${found === 1 ? 'exactly one solution' : 'more than one solution'}.`
+  console.log(result)
+}
+document.getElementById('go').onclick = run
+run()
+</script>
+</body>
+</html>

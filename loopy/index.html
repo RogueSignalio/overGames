@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phaser Loopy: Tile-Based</title>
+<style>
+  body { margin: 0; background: #222; display: flex; justify-content: center; align-items: center; height: 100vh; color: #fff; font-family: sans-serif; }
+  canvas { border: 2px solid #555; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+  #game { text-align: center; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/phaser@v3.90.0/dist/phaser.min.js" crossorigin="anonymous"></script>
+<script src="./loopy_gen.js"></script>
+<script src="./loopy.js"></script>
+</head>
+<body>
+<div id="game"></div>
+<script>
+let game = null
+let maps = []
+let map_configs = [
+  { rows: 5,  columns: 5,  fill_percent: 55, winding: 0.3, difficulty: 'easy', seed: 'quack-1' },
+  { rows: 7,  columns: 7,  fill_percent: 55, winding: 0.3, difficulty: 'easy', seed: 'quack-2' },
+  { rows: 10, columns: 10, fill_percent: 55, winding: 0.3, difficulty: 'easy', seed: 'quack-3' },
+]
+
+map_configs.forEach((mcfg) => {
+  let gen = new LoopyMapGenerator(mcfg)
+  maps.push(gen.generate())   // { map, solution, unique }
+})
+
+try {
+  game = new LoopyGame({
+    map: null,
+    maps: maps,
+    tile_size: 48,
+    theme: {
+      path: 'assets/default/',      // try 'assets/light/'
+      background: 'background.png', // set to null for a plain color
+      background_color: '#222222',
+    },
+    win_callback: (t) => {
+      console.log(`${t.submit}`)
+    },
+    debug: true,   // true = print each level's solution to the browser console
+  },
+  {
+    parent: 'game',
+  })
+} catch (e) {
+  console.error(e.message)
+}
+</script>
+</body>
+</html>
