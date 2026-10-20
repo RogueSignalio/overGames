@@ -1,15 +1,23 @@
-// Net mini game (Phaser 3), image/theme based.
+// Net mini game (Phaser 3), image/theme based and responsive.
 // Plain browser script; needs Phaser and net_gen.js loaded first.
 //
 // new NetGame(config, phaser_config)
 //   config.maps          array of results from NetMapGenerator.generate()
 //   config.map           a single result (used if maps is empty)
-//   config.tile_size     pixels per tile (default 48); images are scaled to fit
+//   config.responsive    true (default): the board scales to fill its container.
+//                        false: fixed size, using tile_size pixels per tile.
+//   config.max_tile_size responsive only: cap the tile size in pixels (default null = no cap)
+//   config.tile_size     pixels per tile when responsive is false (default 48)
 //   config.theme         see "Themes" below
 //   config.advance_delay ms to wait before the next map after a win (default 1200)
 //   config.win_callback  called with { level, moves, submit } on each win
 //   config.debug         log each level's solution to the console
-//   phaser_config        merged into the Phaser.Game config (e.g. { parent: 'game' })
+//   phaser_config        merged into the Phaser.Game config. Pass { parent: 'game' } with the
+//                        id of the container element (it needs a real width and height).
+//
+// Responsive mode: the canvas always fills the container. On every resize the tile size
+// becomes whole pixels of min(container width / columns, container height / rows) and the
+// board is centred. Whatever space is left over shows theme.background_color.
 //
 // Controls: left click = rotate clockwise, right click = rotate counter-clockwise,
 //           shift + click = lock/unlock a tile.
@@ -17,8 +25,8 @@
 // Themes
 //   A theme is a folder of images plus a few settings:
 //     path              folder holding the images, e.g. 'assets/default/'
-//     background        board background image (stretched to the board), or null
-//     background_color  CSS color shown behind everything (used if no background image)
+//     background        board background image (stretched over the board), or null
+//     background_color  CSS color shown behind everything, including any spare space
 //     tile_bg           optional image drawn under every tile, or null
 //     images            filename for each image key (override any you rename)
 //
@@ -30,6 +38,7 @@
 //     cross    opens all four sides
 //   Each has a powered twin named <shape>_on (e.g. corner_on.png).
 //   server.png is drawn on top of the server tile, lock.png on top of locked tiles.
+//   Because the board can be scaled up, supply art at 128px or more for large boards.
 
 const NET_SHAPES = { end: 1, straight: 5, corner: 3, tee: 7, cross: 15 }  // base masks
 
@@ -66,6 +75,8 @@ class NetGame {
     this.config = Object.assign({
       map: null,
       maps: [],
+      responsive: true,
+      max_tile_size: null,
       tile_size: 48,
       theme: {},
       advance_delay: 1200,
@@ -86,21 +97,28 @@ class NetGame {
     this.solved = false
     this.sprites = []
     this.cells = []
+    this.ts = 0   // current tile size in pixels, set by relayout()
+    this.ox = 0   // board position inside the canvas
+    this.oy = 0
 
-    const ts = this.config.tile_size
-    const first = this.levels[0].map
     const self = this
-
-    this.phaser = new Phaser.Game(Object.assign({
+    const base = {
       type: Phaser.AUTO,
-      width: first[0].length * ts,
-      height: first.length * ts,
       backgroundColor: this.theme.background_color,
       scene: {
         preload: function () { self.preload(this) },
         create: function () { self.create(this) },
       },
-    }, phaser_config))
+    }
+    if (this.config.responsive) {
+      base.scale = { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%', resizeInterval: 100 }
+    } else {
+      const first = this.levels[0].map
+      base.width = first[0].length * this.config.tile_size
+      base.height = first.length * this.config.tile_size
+    }
+    const scale = Object.assign({}, base.scale, phaser_config.scale)
+    this.phaser = new Phaser.Game(Object.assign({}, base, phaser_config, { scale }))
   }
 
   preload(scene) {
@@ -122,6 +140,7 @@ class NetGame {
 
     scene.input.mouse.disableContextMenu()
     scene.input.on('pointerdown', (p) => this.on_click(p))
+    scene.scale.on('resize', () => this.relayout())
     this.load_level(0)
   }
 
@@ -142,23 +161,55 @@ class NetGame {
     this.moves = 0
     this.solved = false
 
-    const ts = this.config.tile_size
-    const w = this.columns * ts, h = this.rows * ts
     const scene = this.scene
-    scene.scale.resize(w, h)
+    if (!this.config.responsive) {
+      scene.scale.resize(this.columns * this.config.tile_size, this.rows * this.config.tile_size)
+    }
     scene.cameras.main.setBackgroundColor(this.theme.background_color)
-    this.msg.setPosition(w / 2, h / 2).setVisible(false)
+    this.msg.setVisible(false)
 
-    // Rebuild the sprite layers: 0 board bg, 1 tile bg, 2 pipes, 3 server, 4 locks
+    if (this.config.debug) {
+      console.log(`Level ${i + 1} solution:\n${NetMapGenerator.to_text(lv.solution)}`)
+    }
+    this.relayout()
+  }
+
+  // Work out tile size and board position from the current canvas size, then rebuild.
+  // Runs on every level load and every container resize.
+  relayout() {
+    if (!this.grid) return
+    const W = this.scene.scale.width, H = this.scene.scale.height
+    if (W < 8 || H < 8) return  // container has no size yet
+
+    let ts = this.config.tile_size
+    if (this.config.responsive) {
+      ts = Math.floor(Math.min(W / this.columns, H / this.rows))
+      if (this.config.max_tile_size) ts = Math.min(ts, this.config.max_tile_size)
+    }
+    this.ts = Math.max(1, ts)
+    this.ox = Math.floor((W - this.columns * this.ts) / 2)
+    this.oy = Math.floor((H - this.rows * this.ts) / 2)
+
+    this.msg.setPosition(W / 2, H / 2).setFontSize(Math.max(14, Math.round(this.ts * 0.7)))
+    this.build_sprites()
+    this.draw()
+  }
+
+  // Sprite layers: 0 board bg, 1 tile bg, 2 pipes, 3 server, 4 locks
+  build_sprites() {
+    const scene = this.scene
+    const ts = this.ts, ox = this.ox, oy = this.oy
     this.clear_sprites()
+
     if (this.theme.background) {
-      this.sprites.push(scene.add.image(0, 0, 'net_background').setOrigin(0).setDisplaySize(w, h).setDepth(0))
+      this.sprites.push(scene.add.image(ox, oy, 'net_background').setOrigin(0)
+        .setDisplaySize(this.columns * ts, this.rows * ts).setDepth(0))
     }
 
     for (let y = 0; y < this.rows; y++) {
       const row = []
       for (let x = 0; x < this.columns; x++) {
-        const cx = x * ts + ts / 2, cy = y * ts + ts / 2
+        const cx = ox + x * ts + ts / 2, cy = oy + y * ts + ts / 2
         if (this.theme.tile_bg) {
           this.sprites.push(scene.add.image(cx, cy, 'net_tile_bg').setDisplaySize(ts, ts).setDepth(1))
         }
@@ -170,19 +221,14 @@ class NetGame {
       this.cells.push(row)
     }
 
-    const sx = this.server.x * ts + ts / 2, sy = this.server.y * ts + ts / 2
+    const sx = ox + this.server.x * ts + ts / 2, sy = oy + this.server.y * ts + ts / 2
     this.sprites.push(scene.add.image(sx, sy, 'net_server').setDisplaySize(ts, ts).setDepth(3))
-
-    if (this.config.debug) {
-      console.log(`Level ${i + 1} solution:\n${NetMapGenerator.to_text(lv.solution)}`)
-    }
-    this.draw()
   }
 
   on_click(p) {
-    if (this.solved) return
-    const ts = this.config.tile_size
-    const x = Math.floor(p.x / ts), y = Math.floor(p.y / ts)
+    if (this.solved || !this.ts) return
+    const ts = this.ts
+    const x = Math.floor((p.x - this.ox) / ts), y = Math.floor((p.y - this.oy) / ts)
     if (x < 0 || y < 0 || x >= this.columns || y >= this.rows) return
 
     if (p.event && p.event.shiftKey) {
@@ -214,10 +260,9 @@ class NetGame {
     }
   }
 
-  // Update each tile's sprite from the current grid. No shapes are drawn here,
-  // only textures swapped and rotated.
+  // Update each tile's sprite from the current grid: textures swapped and rotated.
   draw() {
-    const ts = this.config.tile_size
+    const ts = this.ts
     const powered = NetMapGenerator.getPowered(this.grid, this.server)
 
     for (let y = 0; y < this.rows; y++) {
