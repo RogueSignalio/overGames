@@ -1,16 +1,26 @@
-// Loopy mini game (Phaser 3), image/theme based.
+// Loopy mini game (Phaser 3), image/theme based and responsive.
 // Plain browser script; needs Phaser and loopy_gen.js loaded first.
 //
 // new LoopyGame(config, phaser_config)
 //   config.maps          array of results from LoopyMapGenerator.generate()
 //   config.map           a single result (used if maps is empty)
-//   config.tile_size     pixels per cell (default 48); images are scaled to fit
-//   config.margin        pixels of space around the board (default tile_size / 2)
+//   config.responsive    true (default): the board scales to fill its container.
+//                        false: fixed size, using tile_size pixels per cell.
+//   config.max_tile_size responsive only: cap the cell size in pixels (default null = no cap)
+//   config.tile_size     pixels per cell when responsive is false (default 48)
+//   config.margin        space around the grid, in cells (default 0.5), so edges on the
+//                        border are easy to click
 //   config.theme         see "Themes" below
 //   config.advance_delay ms to wait before the next map after a win (default 1200)
 //   config.win_callback  called with { level, moves, submit } on each win
 //   config.debug         true = log each level's solution to the browser console
-//   phaser_config        merged into the Phaser.Game config (e.g. { parent: 'game' })
+//   phaser_config        merged into the Phaser.Game config. Pass { parent: 'game' } with the
+//                        id of the container element (it needs a real width and height).
+//
+// Responsive mode: the canvas always fills the container. On every resize the cell size
+// becomes whole pixels of min(container width / (columns + 2 * margin),
+// container height / (rows + 2 * margin)) and the board is centred. Whatever space is
+// left over shows theme.background_color.
 //
 // Controls: left click  = draw / remove a line on the nearest edge
 //           right click (or shift + click) = mark / unmark the nearest edge as "no line"
@@ -21,13 +31,13 @@
 // Themes
 //   A theme is a folder of images plus a few settings:
 //     path              folder holding the images, e.g. 'assets/default/'
-//     background        board background image (stretched to the board), or null
-//     background_color  CSS color shown behind everything
+//     background        board background image (stretched over grid + margin), or null
+//     background_color  CSS color shown behind everything, including any spare space
 //     line_overlap      how far each line sticks out past its ends, as a fraction of
 //                       the tile (default 0.16). Fills the notch at corners. 0 = exact fit.
 //     images            filename for each image key (override any you rename)
 //
-//   Image keys (all square, any resolution; they are scaled to tile_size):
+//   Image keys (all square, any resolution; they are scaled to the cell size):
 //     cell        backing for each cell
 //     dot         the grid point at every vertex
 //     line        a line, drawn HORIZONTAL and spanning the full width; the game rotates it
@@ -37,6 +47,7 @@
 //     clue_0 ... clue_4          the number, transparent, drawn over the cell
 //     clue_0_ok ... clue_4_ok    same number when the cell has exactly that many lines
 //     clue_0_err ... clue_4_err  same number when it has too many lines
+//   Because the board can be scaled up, supply art at 128px or more for large boards.
 
 const LOOPY_THEME_DEFAULT = (() => {
   const images = {
@@ -63,8 +74,10 @@ class LoopyGame {
     this.config = Object.assign({
       map: null,
       maps: [],
+      responsive: true,
+      max_tile_size: null,
       tile_size: 48,
-      margin: null,
+      margin: 0.5,
       theme: {},
       advance_delay: 1200,
       win_callback: null,
@@ -83,22 +96,29 @@ class LoopyGame {
     this.moves = 0
     this.solved = false
     this.sprites = []
+    this.ts = 0   // current cell size in pixels, set by relayout()
+    this.ox = 0   // position of the grid's top-left vertex inside the canvas
+    this.oy = 0
 
-    const ts = this.config.tile_size
-    this.pad = this.config.margin ?? Math.round(ts / 2)
-    const first = this.levels[0].map
     const self = this
-
-    this.phaser = new Phaser.Game(Object.assign({
+    const base = {
       type: Phaser.AUTO,
-      width: first[0].length * ts + this.pad * 2,
-      height: first.length * ts + this.pad * 2,
       backgroundColor: this.theme.background_color,
       scene: {
         preload: function () { self.preload(this) },
         create: function () { self.create(this) },
       },
-    }, phaser_config))
+    }
+    if (this.config.responsive) {
+      base.scale = { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%', resizeInterval: 100 }
+    } else {
+      const first = this.levels[0].map
+      const m = this.config.margin * 2, ts = this.config.tile_size
+      base.width = Math.ceil((first[0].length + m) * ts)
+      base.height = Math.ceil((first.length + m) * ts)
+    }
+    const scale = Object.assign({}, base.scale, phaser_config.scale)
+    this.phaser = new Phaser.Game(Object.assign({}, base, phaser_config, { scale }))
   }
 
   preload(scene) {
@@ -119,6 +139,7 @@ class LoopyGame {
 
     scene.input.mouse.disableContextMenu()
     scene.input.on('pointerdown', (p) => this.on_click(p))
+    scene.scale.on('resize', () => this.relayout())
     this.load_level(0)
   }
 
@@ -155,25 +176,58 @@ class LoopyGame {
     this.moves = 0
     this.solved = false
 
-    const ts = this.config.tile_size, pad = this.pad
-    const w = this.columns * ts + pad * 2, h = this.rows * ts + pad * 2
     const scene = this.scene
-    scene.scale.resize(w, h)
+    if (!this.config.responsive) {
+      const m = this.config.margin * 2, ts = this.config.tile_size
+      scene.scale.resize(Math.ceil((this.columns + m) * ts), Math.ceil((this.rows + m) * ts))
+    }
     scene.cameras.main.setBackgroundColor(this.theme.background_color)
-    this.msg.setPosition(w / 2, h / 2).setVisible(false)
+    this.msg.setVisible(false)
 
-    // Sprite layers: 0 board bg, 1 cell, 2 number, 3 dot, 4 line, 5 cross
+    if (this.config.debug) this.log_solution(i, lv)
+    this.relayout()
+  }
+
+  // Work out cell size and grid position from the current canvas size, then rebuild.
+  // Runs on every level load and every container resize.
+  relayout() {
+    if (!this.map) return
+    const W = this.scene.scale.width, H = this.scene.scale.height
+    if (W < 8 || H < 8) return  // container has no size yet
+
+    const m = this.config.margin * 2
+    let ts = this.config.tile_size
+    if (this.config.responsive) {
+      ts = Math.floor(Math.min(W / (this.columns + m), H / (this.rows + m)))
+      if (this.config.max_tile_size) ts = Math.min(ts, this.config.max_tile_size)
+    }
+    this.ts = Math.max(1, ts)
+    this.ox = Math.floor((W - this.columns * this.ts) / 2)
+    this.oy = Math.floor((H - this.rows * this.ts) / 2)
+
+    this.msg.setPosition(W / 2, H / 2).setFontSize(Math.max(14, Math.round(this.ts * 0.7)))
+    this.build_sprites()
+    this.draw()
+  }
+
+  // Sprite layers: 0 board bg, 1 cell, 2 number, 3 dot, 4 line, 5 cross
+  build_sprites() {
+    const scene = this.scene
+    const ts = this.ts, ox = this.ox, oy = this.oy
+    const pad = Math.round(ts * this.config.margin)
     this.clear_sprites()
     const add = (s) => { this.sprites.push(s); return s }
+
     if (this.theme.background) {
-      add(scene.add.image(0, 0, 'loopy_background').setOrigin(0).setDisplaySize(w, h).setDepth(0))
+      add(scene.add.image(ox - pad, oy - pad, 'loopy_background').setOrigin(0)
+        .setDisplaySize(this.columns * ts + pad * 2, this.rows * ts + pad * 2).setDepth(0))
     }
 
     this.clues = []
     for (let y = 0; y < this.rows; y++) {
       const row = []
       for (let x = 0; x < this.columns; x++) {
-        const cx = pad + x * ts + ts / 2, cy = pad + y * ts + ts / 2
+        const cx = ox + x * ts + ts / 2, cy = oy + y * ts + ts / 2
         add(scene.add.image(cx, cy, 'loopy_cell').setDisplaySize(ts, ts).setDepth(1))
         const n = this.map[y][x]
         row.push(n >= 0 ? add(scene.add.image(cx, cy, `loopy_clue_${n}`).setDisplaySize(ts, ts).setDepth(2)) : null)
@@ -183,7 +237,7 @@ class LoopyGame {
 
     for (let y = 0; y <= this.rows; y++) {
       for (let x = 0; x <= this.columns; x++) {
-        add(scene.add.image(pad + x * ts, pad + y * ts, 'loopy_dot').setDisplaySize(ts, ts).setDepth(3))
+        add(scene.add.image(ox + x * ts, oy + y * ts, 'loopy_dot').setDisplaySize(ts, ts).setDepth(3))
       }
     }
 
@@ -194,7 +248,7 @@ class LoopyGame {
     for (let y = 0; y <= this.rows; y++) {
       const row = []
       for (let x = 0; x < this.columns; x++) {
-        const cx = pad + x * ts + ts / 2, cy = pad + y * ts
+        const cx = ox + x * ts + ts / 2, cy = oy + y * ts
         row.push({
           line: add(scene.add.image(cx, cy, 'loopy_line').setDisplaySize(long, ts).setDepth(4).setVisible(false)),
           cross: add(scene.add.image(cx, cy, 'loopy_cross').setDisplaySize(ts, ts).setDepth(5).setVisible(false)),
@@ -205,7 +259,7 @@ class LoopyGame {
     for (let y = 0; y < this.rows; y++) {
       const row = []
       for (let x = 0; x <= this.columns; x++) {
-        const cx = pad + x * ts, cy = pad + y * ts + ts / 2
+        const cx = ox + x * ts, cy = oy + y * ts + ts / 2
         row.push({
           line: add(scene.add.image(cx, cy, 'loopy_line').setDisplaySize(long, ts).setAngle(90).setDepth(4).setVisible(false)),
           cross: add(scene.add.image(cx, cy, 'loopy_cross').setDisplaySize(ts, ts).setDepth(5).setVisible(false)),
@@ -213,15 +267,12 @@ class LoopyGame {
       }
       this.edges.v.push(row)
     }
-
-    if (this.config.debug) this.log_solution(i, lv)
-    this.draw()
   }
 
   // Nearest edge to a pointer position, or null if it isn't over the board.
   pick_edge(px, py) {
-    const ts = this.config.tile_size
-    const fx = (px - this.pad) / ts, fy = (py - this.pad) / ts
+    const ts = this.ts
+    const fx = (px - this.ox) / ts, fy = (py - this.oy) / ts
     const hy = Math.round(fy), vx = Math.round(fx)
     const dh = Math.abs(fy - hy), dv = Math.abs(fx - vx)
     const hx = Math.floor(fx), vy = Math.floor(fy)
@@ -233,7 +284,7 @@ class LoopyGame {
   }
 
   on_click(p) {
-    if (this.solved) return
+    if (this.solved || !this.ts) return
     const e = this.pick_edge(p.x, p.y)
     if (!e) return
 
@@ -267,7 +318,7 @@ class LoopyGame {
 
   // Update every sprite from the current state. Only visibility and textures change.
   draw() {
-    const ts = this.config.tile_size
+    const ts = this.ts
     const long = ts * (1 + this.theme.line_overlap)
     const as_lines = {
       h: this.state.h.map(row => row.map(s => (s === 1 ? 1 : 0))),

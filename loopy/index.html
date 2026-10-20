@@ -4,9 +4,13 @@
 <meta charset="UTF-8">
 <title>Phaser Loopy: Tile-Based</title>
 <style>
-  body { margin: 0; background: #222; display: flex; justify-content: center; align-items: center; height: 100vh; color: #fff; font-family: sans-serif; }
-  canvas { border: 2px solid #555; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
-  #game { text-align: center; }
+  html, body { height: 100%; }
+  body { margin: 0; background: #222; display: flex; justify-content: center; align-items: center; color: #fff; font-family: sans-serif; }
+  /* The game fills whatever box it is placed in, so give #game any size you like.
+     (resize: both lets you drag the corner in a desktop browser to try it live.) */
+  #game { width: 80vmin; height: 80vmin; min-width: 200px; min-height: 200px; resize: both; overflow: hidden;
+          border: 2px solid #555; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+  #game canvas { display: block; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/phaser@v3.90.0/dist/phaser.min.js" crossorigin="anonymous"></script>
 <script src="./loopy_gen.js"></script>
@@ -32,7 +36,9 @@ try {
   game = new LoopyGame({
     map: null,
     maps: maps,
-    tile_size: 48,
+    responsive: true,        // false = fixed size, using tile_size below
+    // max_tile_size: 120,   // optional cap on how big tiles may grow
+    tile_size: 48,           // only used when responsive is false
     theme: {
       path: 'assets/default/',      // try 'assets/light/'
       background: 'background.png', // set to null for a plain color
