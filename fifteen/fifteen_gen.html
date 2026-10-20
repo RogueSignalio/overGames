@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fifteen Map Generator Test</title>
+<style>
+  body { margin: 0; background: #222; color: #fff; font-family: sans-serif; padding: 20px; }
+  label { margin-right: 12px; }
+  input { width: 70px; }
+  pre { font-size: 18px; line-height: 1.2; margin: 14px 0 0 0; }
+  #info { margin-top: 12px; color: #aaa; }
+</style>
+<script src="./fifteen_gen.js"></script>
+</head>
+<body>
+<h3>Fifteen generator</h3>
+<label>Columns <input id="cols" type="number" value="4" min="2" max="12"></label>
+<label>Rows <input id="rows" type="number" value="4" min="2" max="12"></label>
+<label>Shuffle moves <input id="shuffle" type="number" placeholder="auto" min="1"></label>
+<label>Seed <input id="seed" type="text" value="quack"></label>
+<button id="go">Generate</button>
+<div id="info"></div>
+<pre id="boards"></pre>
+<h4>Solution (tile number + the direction it slides)</h4>
+<pre id="moves"></pre>
+<script>
+function run() {
+  const cfg = {
+    columns: +document.getElementById('cols').value,
+    rows: +document.getElementById('rows').value,
+    seed: document.getElementById('seed').value || null,
+  }
+  const shuffle = document.getElementById('shuffle').value
+  if (shuffle) cfg.shuffle_moves = +shuffle
+
+  const t0 = performance.now()
+  const result = new FifteenMapGenerator(cfg).generate()
+  const ms = Math.round(performance.now() - t0)
+
+  const replay = FifteenMapGenerator.replay(result.map, result.solution)
+  document.getElementById('boards').textContent =
+    FifteenMapGenerator.boards_to_text([result.map, result.goal], 2, ['Start', 'Solved'])
+  document.getElementById('moves').textContent = FifteenMapGenerator.moves_to_text(result.solution)
+  document.getElementById('info').textContent =
+    `Generated in ${ms} ms. ${result.solution.length} moves in the stored solution. ` +
+    `Replaying them solves it: ${replay.ok && replay.solved}. ` +
+    `Solvable by the parity rule: ${FifteenMapGenerator.is_solvable(result.map)}.`
+  console.log(result)
+}
+document.getElementById('go').onclick = run
+run()
+</script>
+</body>
+</html>
