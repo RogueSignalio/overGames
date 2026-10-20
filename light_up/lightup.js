@@ -1,15 +1,23 @@
-// Light Up mini game (Phaser 3), image/theme based.
+// Light Up mini game (Phaser 3), image/theme based and responsive.
 // Plain browser script; needs Phaser and lightup_gen.js loaded first.
 //
 // new LightUpGame(config, phaser_config)
 //   config.maps          array of results from LightUpMapGenerator.generate()
 //   config.map           a single result (used if maps is empty)
-//   config.tile_size     pixels per cell (default 48); images are scaled to fit
+//   config.responsive    true (default): the board scales to fill its container.
+//                        false: fixed size, using tile_size pixels per cell.
+//   config.max_tile_size responsive only: cap the cell size in pixels (default null = no cap)
+//   config.tile_size     pixels per cell when responsive is false (default 48)
 //   config.theme         see "Themes" below
 //   config.advance_delay ms to wait before the next map after a win (default 1200)
 //   config.win_callback  called with { level, moves, submit } on each win
 //   config.debug         true = log each level's solution to the browser console
-//   phaser_config        merged into the Phaser.Game config (e.g. { parent: 'game' })
+//   phaser_config        merged into the Phaser.Game config. Pass { parent: 'game' } with the
+//                        id of the container element (it needs a real width and height).
+//
+// Responsive mode: the canvas always fills the container. On every resize the cell size
+// becomes whole pixels of min(container width / columns, container height / rows) and the
+// board is centred. Whatever space is left over shows theme.background_color.
 //
 // Controls: left click  = place / remove a lamp
 //           right click (or shift + click) = place / remove a "no lamp here" mark
@@ -21,11 +29,11 @@
 // Themes
 //   A theme is a folder of images plus a few settings:
 //     path              folder holding the images, e.g. 'assets/default/'
-//     background        board background image (stretched to the board), or null
-//     background_color  CSS color shown behind everything
+//     background        board background image (stretched over the board), or null
+//     background_color  CSS color shown behind everything, including any spare space
 //     images            filename for each image key (override any you rename)
 //
-//   Image keys (all square, any resolution; they are scaled to tile_size):
+//   Image keys (all square, any resolution; they are scaled to the cell size):
 //     white       empty white cell, not lit
 //     lit         white cell that is lit
 //     black       black cell (base for numbered and unnumbered ones)
@@ -37,6 +45,7 @@
 //     mark        the "no lamp" mark, transparent
 //   Leave a little transparent margin around cell images if you want the
 //   background to show through as grid lines.
+//   Because the board can be scaled up, supply art at 128px or more for large boards.
 
 const LU_THEME_DEFAULT = (() => {
   const images = {
@@ -56,6 +65,8 @@ class LightUpGame {
     this.config = Object.assign({
       map: null,
       maps: [],
+      responsive: true,
+      max_tile_size: null,
       tile_size: 48,
       theme: {},
       advance_delay: 1200,
@@ -76,21 +87,28 @@ class LightUpGame {
     this.solved = false
     this.sprites = []
     this.cells = []
+    this.ts = 0   // current cell size in pixels, set by relayout()
+    this.ox = 0   // board position inside the canvas
+    this.oy = 0
 
-    const ts = this.config.tile_size
-    const first = this.levels[0].map
     const self = this
-
-    this.phaser = new Phaser.Game(Object.assign({
+    const base = {
       type: Phaser.AUTO,
-      width: first[0].length * ts,
-      height: first.length * ts,
       backgroundColor: this.theme.background_color,
       scene: {
         preload: function () { self.preload(this) },
         create: function () { self.create(this) },
       },
-    }, phaser_config))
+    }
+    if (this.config.responsive) {
+      base.scale = { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%', resizeInterval: 100 }
+    } else {
+      const first = this.levels[0].map
+      base.width = first[0].length * this.config.tile_size
+      base.height = first.length * this.config.tile_size
+    }
+    const scale = Object.assign({}, base.scale, phaser_config.scale)
+    this.phaser = new Phaser.Game(Object.assign({}, base, phaser_config, { scale }))
   }
 
   preload(scene) {
@@ -111,6 +129,7 @@ class LightUpGame {
 
     scene.input.mouse.disableContextMenu()
     scene.input.on('pointerdown', (p) => this.on_click(p))
+    scene.scale.on('resize', () => this.relayout())
     this.load_level(0)
   }
 
@@ -145,24 +164,54 @@ class LightUpGame {
     this.moves = 0
     this.solved = false
 
-    const ts = this.config.tile_size
-    const w = this.columns * ts, h = this.rows * ts
     const scene = this.scene
-    scene.scale.resize(w, h)
+    if (!this.config.responsive) {
+      scene.scale.resize(this.columns * this.config.tile_size, this.rows * this.config.tile_size)
+    }
     scene.cameras.main.setBackgroundColor(this.theme.background_color)
-    this.msg.setPosition(w / 2, h / 2).setVisible(false)
+    this.msg.setVisible(false)
 
-    // Sprite layers: 0 board bg, 1 cell, 2 number, 3 mark, 4 lamp
+    if (this.config.debug) this.log_solution(i, lv)
+    this.relayout()
+  }
+
+  // Work out cell size and board position from the current canvas size, then rebuild.
+  // Runs on every level load and every container resize.
+  relayout() {
+    if (!this.map) return
+    const W = this.scene.scale.width, H = this.scene.scale.height
+    if (W < 8 || H < 8) return  // container has no size yet
+
+    let ts = this.config.tile_size
+    if (this.config.responsive) {
+      ts = Math.floor(Math.min(W / this.columns, H / this.rows))
+      if (this.config.max_tile_size) ts = Math.min(ts, this.config.max_tile_size)
+    }
+    this.ts = Math.max(1, ts)
+    this.ox = Math.floor((W - this.columns * this.ts) / 2)
+    this.oy = Math.floor((H - this.rows * this.ts) / 2)
+
+    this.msg.setPosition(W / 2, H / 2).setFontSize(Math.max(14, Math.round(this.ts * 0.7)))
+    this.build_sprites()
+    this.draw()
+  }
+
+  // Sprite layers: 0 board bg, 1 cell, 2 number, 3 mark, 4 lamp
+  build_sprites() {
+    const scene = this.scene
+    const ts = this.ts, ox = this.ox, oy = this.oy
     this.clear_sprites()
+
     if (this.theme.background) {
-      this.sprites.push(scene.add.image(0, 0, 'lu_background').setOrigin(0).setDisplaySize(w, h).setDepth(0))
+      this.sprites.push(scene.add.image(ox, oy, 'lu_background').setOrigin(0)
+        .setDisplaySize(this.columns * ts, this.rows * ts).setDepth(0))
     }
 
     for (let y = 0; y < this.rows; y++) {
       const row = []
       for (let x = 0; x < this.columns; x++) {
         const v = this.map[y][x]
-        const cx = x * ts + ts / 2, cy = y * ts + ts / 2
+        const cx = ox + x * ts + ts / 2, cy = oy + y * ts + ts / 2
         const cell = { base: null, clue: null, mark: null, lamp: null }
 
         cell.base = scene.add.image(cx, cy, v === LU.WHITE ? 'lu_white' : 'lu_black').setDisplaySize(ts, ts).setDepth(1)
@@ -177,15 +226,12 @@ class LightUpGame {
       }
       this.cells.push(row)
     }
-
-    if (this.config.debug) this.log_solution(i, lv)
-    this.draw()
   }
 
   on_click(p) {
-    if (this.solved) return
-    const ts = this.config.tile_size
-    const x = Math.floor(p.x / ts), y = Math.floor(p.y / ts)
+    if (this.solved || !this.ts) return
+    const ts = this.ts
+    const x = Math.floor((p.x - this.ox) / ts), y = Math.floor((p.y - this.oy) / ts)
     if (x < 0 || y < 0 || x >= this.columns || y >= this.rows) return
     if (this.map[y][x] !== LU.WHITE) return
 
@@ -218,7 +264,7 @@ class LightUpGame {
 
   // Update each cell's sprites from the current state. Only textures are swapped.
   draw() {
-    const ts = this.config.tile_size
+    const ts = this.ts
     const lamps = this.state.map(row => row.map(v => (v === 1 ? 1 : 0)))
     const a = LightUpMapGenerator.analyze(this.map, lamps)
     this.analysis = a
