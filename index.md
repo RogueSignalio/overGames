@@ -7,3 +7,5 @@
 [Light-up](/light_up/index.html)
 
 [Fifteen](/fifteen/index.html)
+
+[Slider](/slider/index.html)
