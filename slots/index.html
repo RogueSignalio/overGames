@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phaser Slots</title>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; background: #222; display: flex; flex-direction: column; justify-content: center; align-items: center;
+         gap: 12px; color: #fff; font-family: sans-serif; }
+  /* The game fills whatever box it is placed in, so give #game any size you like.
+     (resize: both lets you drag the corner in a desktop browser to try it live.) */
+  #game { width: 70vmin; height: 80vmin; min-width: 200px; min-height: 200px; resize: both; overflow: hidden;
+          border: 2px solid #555; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+  #game canvas { display: block; touch-action: none; }
+  /* demo controls, not part of the game */
+  #tools { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+  #tools button { padding: 6px 12px; cursor: pointer; }
+  #log { font: 12px monospace; color: #9c9; min-height: 1.4em; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/phaser@v3.90.0/dist/phaser.min.js" crossorigin="anonymous"></script>
+<script src="./slots_rules.js"></script>
+<script src="./slots.js"></script>
+</head>
+<body>
+<div id="game"></div>
+<div id="tools">
+  <button id="add1">+1 play</button>
+  <button id="add5">+5 plays</button>
+  <button id="mute">Mute</button>
+  <span id="log"></span>
+</div>
+<script>
+let game = null
+const log = (text) => { document.getElementById('log').textContent = text; console.log(text) }
+
+try {
+  game = new SlotGame({
+    // ---- symbols. The id is also the image name: symbol_<id>.png in the theme folder.
+    //      weight = relative chance of landing (default 1). A plain string is weight 1.
+    symbols: [
+      { id: 'cherry', weight: 3 },
+      { id: 'lemon', weight: 3 },
+      { id: 'bell', weight: 2 },
+      { id: 'star', weight: 2 },
+      { id: 'seven', weight: 1 },
+      // 'wild' is added by `wildcard` below
+    ],
+    wildcard: 'wild',
+    wildcard_substitutes: false,   // true = wild stands in for any symbol in every combination below
+
+    // ---- winning combinations, one symbol per reel. The FIRST matching entry is the win
+    //      that is reported, so put the specific ones before the catch-alls.
+    //      '*' matches any symbol. An entry can be an object to carry your own data.
+    wins: [
+      { symbols: ['seven', 'seven', 'seven'], name: 'jackpot', points: 100 },
+      { symbols: ['bell', 'bell', 'bell'], points: 20 },
+      { symbols: ['star', 'star', 'star'], points: 20 },
+      { symbols: ['lemon', 'lemon', 'lemon'], points: 10 },
+      { symbols: ['cherry', 'cherry', 'cherry'], points: 10 },
+      ['wild', 'wild', 'wild'],
+      ['cherry', 'cherry', 'wild'],
+      ['lemon', 'lemon', 'wild'],
+      { symbols: ['cherry', 'cherry', '*'], name: 'two cherries', points: 2 },
+    ],
+    ordered: true,        // false = [cherry, cherry, wild] is also won by wild, cherry, cherry etc.
+
+    reels: 3,             // every combination above needs this many symbols
+    visible_rows: 3,      // only the middle row counts; 1 = a single-row window
+    plays: 5,             // how many spins; Infinity = unlimited. game.add_plays(n) adds more later
+    win_rate: 0.3,        // 0..1 = force that chance of a win; null = natural odds from the weights
+    // seed: 'quack',     // same seed = same sequence of results
+    // result_provider: ({ play }) => (play === 1 ? ['seven', 'seven', 'seven'] : null),
+
+    responsive: true,     // false = fixed size, using tile_size below
+    // max_tile_size: 160,
+    tile_size: 96,        // only used when responsive is false
+    spin_ms: 1400,        // roughly how long reel 1 spins
+    stagger_ms: 350,      // each later reel spins this much longer
+    speed: 14,            // top speed in symbols per second (varies a little per reel)
+    // spin_jitter_ms: 150,    // random +/- on each reel's spin time
+    // start_stagger_ms: 60,   // reels start a little after one another
+    // bounce: 1,              // wind-up and rebound size. 0 = none
+    // motion_blur: 0.4,       // 0 = off. symbols stretch and fade when moving fast
+    // reel_ease: 'Cubic.easeInOut',   // optional: the old plain eased spin (no wind-up or rebound)
+    volume: 1,
+    muted: false,
+    messages: { win: 'You win!', lose: 'Try again', plays: 'Plays left: {n}', out: 'No plays left' },
+
+    theme: {
+      path: 'assets/default/',        // try 'assets/light/'
+      background: 'background.png',   // set to null for a plain color
+      background_color: '#1a1a2e',
+      // foreground: 'foreground.png', reel: 'reel.png', button: 'button.png', button_disabled: 'button_disabled.png',
+      // symbols: { cherry: 'my_cherry.png' },    // override a symbol's filename
+      // sounds: { spin: 'spin.wav', stop: 'stop.wav', win: 'win.wav', lose: 'lose.wav' },   // null = silent
+      // payline_color: '#ff4040',
+      // drum_angle: 0.45,      // how round the reels look. 0 = flat
+      // shade: { strength: 0.6, highlight: 0.12, color: '#000000' },   // null = no shading
+      // shade_image: 'my_shade.png',   // or your own transparent shading image
+    },
+
+    win_callback: (r) => {
+      log(`WIN  ${r.submit}  (${r.win.name || 'combination #' + r.win.index}${r.win.points ? ', ' + r.win.points + ' pts' : ''})`)
+    },
+    lose_callback: (r) => log(`lose ${r.submit}`),
+    out_of_plays_callback: (r) => console.log('out of plays after play', r.play),
+    debug: false,         // true = log every spin to the console
+  },
+  {
+    parent: 'game',
+  })
+} catch (e) {
+  console.error(e.message)
+}
+
+document.getElementById('add1').onclick = () => game && game.add_plays(1)
+document.getElementById('add5').onclick = () => game && game.add_plays(5)
+let muted = false
+document.getElementById('mute').onclick = (ev) => {
+  muted = !muted
+  game.set_muted(muted)
+  ev.target.textContent = muted ? 'Unmute' : 'Mute'
+}
+</script>
+</body>
+</html>
